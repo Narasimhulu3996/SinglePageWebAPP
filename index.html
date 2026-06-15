@@ -687,6 +687,9 @@ img,canvas,svg,video{max-width:100%}
 </div></div></nav>
 
 <main class="wrap">
+  <div id="weightWarningBanner" style="display:none; background:#fff3cd; color:#856404; border:1px solid #ffeeba; border-radius:10px; padding:12px 20px; font-weight:600; font-size:14px; margin-bottom:16px; align-items:center; justify-content:center; gap:10px; width:100%; box-sizing:border-box;">
+    <span>⚠️ Warning: The total weightage score of all parameters is <span id="weightWarningSum">100</span>% (not equal to 100%). Please change parameter weights under the Methodology tab.</span>
+  </div>
   <section class="panel active" id="p-rankings"></section>
   <section class="panel" id="p-heatmap"></section>
   <section class="panel" id="p-trends"></section>
@@ -713,11 +716,11 @@ img,canvas,svg,video{max-width:100%}
 
 /* ---- Grade thresholds (single source of truth) ---- */
 const GRADES = [
-  {g:'A', min:62, color:'var(--a)', label:'≥ 62'},
-  {g:'B', min:51, color:'var(--b)', label:'51–61.99'},
-  {g:'C', min:40, color:'var(--c)', label:'40–50.99'},
-  {g:'D', min:30, color:'var(--d)', label:'30–39.99'},
-  {g:'E', min:0,  color:'var(--e)', label:'< 30'},
+  {g:'A', min:75, color:'var(--a)', label:'≥75'},
+  {g:'B', min:62, color:'var(--b)', label:'62–74'},
+  {g:'C', min:49, color:'var(--c)', label:'49–61'},
+  {g:'D', min:36, color:'var(--d)', label:'36–48'},
+  {g:'E', min:0,  color:'var(--e)', label:'<36'},
 ];
 function gradeFor(score){ for(const x of GRADES){ if(score>=x.min) return x.g; } return 'E'; }
 function gradeColor(g){ return (GRADES.find(x=>x.g===g)||GRADES[4]).color; }
@@ -857,6 +860,36 @@ function saveStaged(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(list)); }catch(e){}  // fallback mirror
   idbSet(LS_KEY, list);                               // durable primary (async, fire-and-forget)
 }
+function saveCustomizations(){
+  try {
+    const custom = {};
+    STATE.weeks.forEach(w => {
+      if (w.data) {
+        custom[w.key] = {
+          weights: w.data.weights,
+          parameters: w.data.parameters,
+          meta: w.data.meta
+        };
+      }
+    });
+    localStorage.setItem('anm_custom_config', JSON.stringify(custom));
+  } catch(e) {}
+}
+function applyCustomizations(){
+  try {
+    const custom = JSON.parse(localStorage.getItem('anm_custom_config'));
+    if (custom) {
+      STATE.weeks.forEach(w => {
+        if (w.data && custom[w.key]) {
+          w.data.weights = custom[w.key].weights;
+          w.data.parameters = custom[w.key].parameters;
+          w.data.meta = custom[w.key].meta;
+          freezeWeek(w);
+        }
+      });
+    }
+  } catch(e) {}
+}
 function mergeStaged(){
   const staged=loadStaged(); if(!staged||!staged.length) return;
   staged.forEach(s=>{ if(!s||!s.data) return; s.published=false; s.isSample=false;
@@ -890,6 +923,7 @@ async function loadManifestWeeks(){
 async function boot(){
   applyRole();
   const admin=isAdmin();
+  STATE.rankBasis = 'overall';
   await hydrateStaged();   // restore uploaded weeks from durable storage before anything else
 
   // 1) PUBLISHED weeks committed to the repo (shared, view-only source of truth)
@@ -897,6 +931,7 @@ async function boot(){
   if(pub){
     STATE.weeks=pub;
     mergeStaged();            // (1) uploaded weeks always survive a refresh
+    applyCustomizations();
     recompute();
     return;
   }
@@ -917,6 +952,7 @@ async function boot(){
   STATE.weeks=[];
   addWeek(data, seedName, source, /*published=*/true, /*isSample=*/!!(cfg.isSample));
   mergeStaged();             // (1) uploaded weeks always survive a refresh
+  applyCustomizations();
   recompute();
 }
 
@@ -1271,19 +1307,21 @@ function computeComposite(data){
   const W=data.weights; // {param: percent} when file is weighted
   return data.stations.map(st=>{
     let score;
-    if(typeof st.score==='number'){
-      score=st.score;                          // authoritative score from file
-    } else if(W){
+    if(W){
       let tot=0,wsum=0;                         // weighted average of present params
       params.forEach(p=>{ const v=st.parameters[p]; const w=W[p]||0;
         if(typeof v==='number'){ tot+=v*w; wsum+=w; } });
       score=wsum? Math.round((tot/wsum)*10)/10 : 0;
+      score=Math.min(100.0, score);
+    } else if(typeof st.score==='number'){
+      score=Math.min(100.0, st.score);                          // authoritative score from file
     } else {
       const present=params.filter(p=> typeof st.parameters[p]==='number'); // equal-weight
       score=present.length? Math.round((present.reduce((a,p)=>a+st.parameters[p],0)/present.length)*10)/10 : 0;
+      score=Math.min(100.0, score);
     }
     return {name:st.name, parameters:st.parameters, extras:st.extras||null, score,
-            grade: st.grade || gradeFor(score),
+            grade: gradeFor(score),
             providedDelta:(typeof st.delta==='number')? st.delta : null};
   });
 }
@@ -1315,6 +1353,7 @@ function recompute(){
     if(i>=0) curIdx = i;
   }
   const cur=weeks[curIdx], prev=weeks[curIdx-1]||null;
+  freezeWeek(cur);
 
   STATE.config = Object.assign({
     title:'Annamayya Police Smart Policing', subtitle:'PS Performance Dashboard',
@@ -1391,6 +1430,20 @@ function recompute(){
   STATE.byName={}; rows.forEach(r=> STATE.byName[r.name]=r);
   STATE.source = `${weeks.length} week${weeks.length>1?'s':''} loaded · current ${cur.label}`;
 
+  // verify total weightage score of all parameters
+  const sumWeights = params.reduce((acc, p) => acc + (STATE.weights ? (STATE.weights[p] || 0) : 0), 0);
+  const banner = document.getElementById('weightWarningBanner');
+  const sumEl = document.getElementById('weightWarningSum');
+  if (banner && sumEl) {
+    const roundedSum = Math.round(sumWeights * 10) / 10;
+    if (Math.abs(roundedSum - 100) > 0.01) {
+      sumEl.textContent = roundedSum;
+      banner.style.display = 'flex';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+
   paintChrome(); renderAll(); setSource(true, STATE.source); updateCompareBadge();
 }
 
@@ -1410,8 +1463,25 @@ function updateCompareBadge(){
 function paintChrome(){
   const c=STATE.config;
   document.getElementById('h-title').innerHTML = `${c.title} — <b>${c.subtitle}</b>`;
-  const wkTxt = (c.weekEnding && c.weekEnding.includes('–')) ? 'Week: '+c.weekEnding : 'Week: '+c.weekEnding;
-  document.getElementById('h-week').textContent = wkTxt;
+  
+  const hWeek = document.getElementById('h-week');
+  const ws = legacyWeeks();
+  if (ws.length > 1) {
+    let html = `<label for="headerWeekSelect" style="color:var(--gold-soft);font-weight:600;margin-right:6px;">Select View:</label>
+    <select id="headerWeekSelect" onchange="window.handleWeekSelectChange(this.value)" style="background:rgba(255,255,255,0.15); color:#fff; border:1px solid rgba(255,255,255,0.25); border-radius:6px; padding:3px 8px; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; outline:none;">`;
+    const overallSelected = (STATE.rankBasis === 'overall') ? 'selected' : '';
+    html += `<option value="overall" ${overallSelected}>Overall Average (Cumulative)</option>`;
+    ws.forEach(w => {
+      const selected = (STATE.selectedWeekKey === w.key && STATE.rankBasis !== 'overall') ? 'selected' : '';
+      html += `<option value="${w.key}" ${selected}>Week: ${w.rangeLabel || w.label}</option>`;
+    });
+    html += `</select>`;
+    hWeek.innerHTML = html;
+  } else {
+    const wkTxt = (c.weekEnding && c.weekEnding.includes('–')) ? 'Week: '+c.weekEnding : 'Week: '+c.weekEnding;
+    hWeek.textContent = wkTxt;
+  }
+
   document.getElementById('h-method').textContent = c.scoringMethod || 'Composite Weighted Scoring';
   document.getElementById('h-prev').textContent = 'Previous Week: '+(c.prevWeek||'—');
   // Header stat = declared config count; tooltip shows actual detected
@@ -1425,6 +1495,20 @@ function paintChrome(){
     `${STATE.rows.length} Police Stations · ${STATE.parameters.length} parameters · `+
     `Source: ${STATE.source}`;
 }
+
+window.handleWeekSelectChange = function(val) {
+  if (val === 'overall') {
+    STATE.rankBasis = 'overall';
+    const ws = legacyWeeks();
+    if (ws.length) {
+      STATE.selectedWeekKey = ws[ws.length - 1].key;
+    }
+  } else {
+    STATE.rankBasis = 'week';
+    STATE.selectedWeekKey = val;
+  }
+  recompute();
+};
 function setSource(ok,txt){
   document.getElementById('srcdot').style.background= ok?'var(--a)':'var(--e)';
   document.getElementById('srcdot').style.boxShadow = ok?'0 0 8px var(--a)':'0 0 8px var(--e)';
@@ -1634,7 +1718,7 @@ function exportBreakdownExcel(name){
 
 async function exportRankingsExcel(){
   if(typeof ExcelJS==='undefined'){ alert('Excel engine is still loading \u2014 please try again in a moment.'); return; }
-  const basis = STATE.rankBasis || 'week';
+  const basis = STATE.rankBasis || 'overall';
   const overall = basis==='overall';
   const P = STATE.parameters;
   const wk = (STATE.config.weekEnding||''), pw = (STATE.config.prevWeek||'');
@@ -1826,11 +1910,11 @@ async function exportHeatmapExcel(){
 
 function setRankBasis(b){ STATE.rankBasis=b; renderRankings(); }
 function renderRankings(){
-  const basis = STATE.rankBasis || 'week';
+  const basis = STATE.rankBasis || 'overall';
   const n = STATE.history.weeksCount || 1;
   const seg = `<div class="seg">
-    <button class="segbtn ${basis==='week'?'active':''}" onclick="setRankBasis('week')">📅 This Week (${STATE.config.weekEnding})</button>
     <button class="segbtn ${basis==='overall'?'active':''}" onclick="setRankBasis('overall')">🗓 Overall Avg Rank</button>
+    <button class="segbtn ${basis==='week'?'active':''}" onclick="setRankBasis('week')">📅 This Week (${STATE.config.weekEnding})</button>
   </div>`;
 
   if(basis==='overall'){ renderOverallRankings(seg); return; }
@@ -1872,8 +1956,8 @@ function renderRankings(){
       <span class="desc">Composite weighted score · ▲▼ rank vs ${STATE.config.prevWeek} · ↑↓ score change</span></div>
     ${seg}
     <div class="grid g2" style="margin-bottom:16px">
-      <div class="card"><div class="ch"><h3>🏆 Top 5 Performers</h3></div><div class="cb"><div class="podium" style="grid-template-columns:1fr">${podium(top,false)}</div></div></div>
-      <div class="card"><div class="ch"><h3>⚠️ Bottom 5 — Need Attention</h3></div><div class="cb"><div class="podium" style="grid-template-columns:1fr">${podium(bottom,true)}</div></div></div>
+      <div class="card"><div class="ch"><h3 style="color:var(--a);">🏆 Top 5 Performers</h3></div><div class="cb"><div class="podium" style="grid-template-columns:1fr">${podium(top,false)}</div></div></div>
+      <div class="card"><div class="ch"><h3 style="color:var(--e);">⚠️ Bottom 5 — Need Attention</h3></div><div class="cb"><div class="podium" style="grid-template-columns:1fr">${podium(bottom,true)}</div></div></div>
     </div>
     <div class="card" style="margin-bottom:16px"><div class="ch"><h3>Composite Score — All ${rows.length} Police Stations (this week)</h3></div>
       <div class="cb"><div class="chart-box" style="height:420px"><canvas id="c-allscores"></canvas></div></div></div>
@@ -1926,8 +2010,8 @@ function renderOverallRankings(seg){
     ${seg}
     ${n<2?`<div class="note" style="margin-bottom:16px">Only one week is loaded, so “overall” equals this week. Use <b>Add Week(s)</b> to load more weekly files (with the week date in the filename) and this becomes a true multi-week average.</div>`:''}
     <div class="grid g2" style="margin-bottom:16px">
-      <div class="card"><div class="ch"><h3>🏆 Top 5 (overall average)</h3></div><div class="cb"><div class="podium" style="grid-template-columns:1fr">${podium(top,false)}</div></div></div>
-      <div class="card"><div class="ch"><h3>⚠️ Bottom 5 (overall average)</h3></div><div class="cb"><div class="podium" style="grid-template-columns:1fr">${podium(bottom,true)}</div></div></div>
+      <div class="card"><div class="ch"><h3 style="color:var(--a);">🏆 Top 5 (overall average)</h3></div><div class="cb"><div class="podium" style="grid-template-columns:1fr">${podium(top,false)}</div></div></div>
+      <div class="card"><div class="ch"><h3 style="color:var(--e);">⚠️ Bottom 5 (overall average)</h3></div><div class="cb"><div class="podium" style="grid-template-columns:1fr">${podium(bottom,true)}</div></div></div>
     </div>
     <div class="card" style="margin-bottom:16px"><div class="ch"><h3>Average Score — All ${ov.length} Police Stations</h3></div>
       <div class="cb"><div class="chart-box" style="height:${Math.max(340,ov.length*16)}px"><canvas id="c-overall"></canvas></div></div></div>
@@ -2296,6 +2380,8 @@ function drawDetail(name){
 function renderMethod(){
   const P=STATE.parameters;
   const W=STATE.weights, MET=STATE.meta;
+  const admin = isAdmin();
+  
   // Build rows from the actual loaded parameters/weights when available, else the canonical table
   let table, total;
   if(W && P.length){
@@ -2310,19 +2396,73 @@ function renderMethod(){
       const typeStr = WEIGHTS_TABLE[i] ? WEIGHTS_TABLE[i][3] : (m.dir>0?'Weekly':'Weekly');
       const dirN    = canon ? canon[2] : m.dir;
       const dirStr  = dirN>0 ? '⬆ Higher=Better' : '⬇ Lower=Better';
-      return [i+1, paramName, catName, (W[p]!=null?W[p]:(WEIGHTS_TABLE[i]?WEIGHTS_TABLE[i][2]:m.wt)), typeStr, dirStr]; });
+      return [i+1, paramName, catName, (W[p]!=null?W[p]:(WEIGHTS_TABLE[i]?WEIGHTS_TABLE[i][2]:m.wt)), typeStr, dirStr, p]; });
     total = P.reduce((a,p,i)=> a+(W[p]!=null?W[p]:(WEIGHTS_TABLE[i]?WEIGHTS_TABLE[i][2]:0)), 0);
   } else {
-    table = WEIGHTS_TABLE.map((r,i)=>[i+1, r[0], r[1], r[2], r[3], r[4]>0?'⬆ Higher=Better':'⬇ Lower=Better']);
+    table = WEIGHTS_TABLE.map((r,i)=>[i+1, r[0], r[1], r[2], r[3], r[4]>0?'⬆ Higher=Better':'⬇ Lower=Better', r[0]]);
     total = WEIGHTS_TABLE.reduce((a,r)=>a+r[2],0);
   }
-  const wrows = table.map(r=>`<tr>
-    <td class="center" style="color:var(--faint)">${r[0]}</td>
-    <td class="nm">${r[1]}</td>
-    <td class="center"><span class="catpill">${r[2]}</span></td>
-    <td class="center sc" style="color:var(--accent)">${Math.round(r[3]*10)/10}%</td>
-    <td class="center ${r[4]==='Weekly'?'typ-weekly':'typ-cum'}">${r[4]}</td>
-    <td class="center dir">${r[5]}</td></tr>`).join('');
+  
+  const wrows = table.map(r=>{
+    const rawKey = r[6];
+    const weightVal = Math.round(r[3]*10)/10;
+    const weightHtml = admin
+      ? `<div style="display:inline-flex; align-items:center; gap:4px;">
+           <input type="number" step="0.1" min="0" max="100" value="${weightVal}" 
+             onchange="window.updateParamWeight('${rawKey.replace(/'/g,"\\'")}', this.value)" 
+             style="width:65px; padding:4px; border:1px solid var(--line2); border-radius:6px; font-weight:700; text-align:center; color:var(--accent); font-family:inherit;">
+           <span>%</span>
+         </div>`
+      : `${weightVal}%`;
+      
+    const actionsHtml = admin
+      ? `<td class="center">
+           <button class="btn" onclick="window.deleteParam('${rawKey.replace(/'/g,"\\'")}')" 
+             style="padding:4px 8px; color:var(--e); border-color:var(--e); background:none; font-size:11px;" 
+             title="Delete parameter">🗑 Delete</button>
+         </td>`
+      : '';
+      
+    return `<tr>
+      <td class="center" style="color:var(--faint)">${r[0]}</td>
+      <td class="nm">${r[1]}</td>
+      <td class="center"><span class="catpill">${r[2]}</span></td>
+      <td class="center sc" style="color:var(--accent)">${weightHtml}</td>
+      <td class="center ${r[4]==='Weekly'?'typ-weekly':'typ-cum'}">${r[4]}</td>
+      <td class="center dir">${r[5]}</td>
+      ${actionsHtml}
+    </tr>`;
+  }).join('');
+
+  const addParamCard = admin
+    ? `<div class="card" style="margin-bottom:16px;">
+        <div class="ch"><h3>➕ Add New Parameter</h3></div>
+        <div class="cb">
+          <form id="addParamForm" onsubmit="event.preventDefault(); window.addNewParameter();" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; align-items:end;">
+            <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+              <label style="font-size:12px; font-weight:600; color:var(--muted);">Parameter Name</label>
+              <input type="text" id="newParamName" required placeholder="e.g. Crime Rate" style="padding:8px 12px; border:1px solid var(--line2); border-radius:8px; font-family:inherit; font-size:13px;">
+            </div>
+            <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+              <label style="font-size:12px; font-weight:600; color:var(--muted);">Methodology Category</label>
+              <input type="text" id="newParamCat" required placeholder="e.g. Crime Control" style="padding:8px 12px; border:1px solid var(--line2); border-radius:8px; font-family:inherit; font-size:13px;">
+            </div>
+            <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+              <label style="font-size:12px; font-weight:600; color:var(--muted);">Weight (%)</label>
+              <input type="number" step="0.1" min="0" max="100" id="newParamWeight" required placeholder="e.g. 5.0" style="padding:8px 12px; border:1px solid var(--line2); border-radius:8px; font-family:inherit; font-size:13px;">
+            </div>
+            <div class="field" style="display:flex; flex-direction:column; gap:4px;">
+              <label style="font-size:12px; font-weight:600; color:var(--muted);">Direction</label>
+              <select id="newParamDir" style="padding:8px 12px; border:1px solid var(--line2); border-radius:8px; font-family:inherit; font-size:13px; background:#fff;">
+                <option value="1">⬆ Higher=Better</option>
+                <option value="-1">⬇ Lower=Better</option>
+              </select>
+            </div>
+            <button class="btn gold" type="submit" style="justify-content:center; padding:10px; height:38px;">➕ Add Parameter</button>
+          </form>
+        </div>
+      </div>`
+    : '';
 
   $('p-method').innerHTML=`
     <div class="sec-h"><h2>📋 Methodology</h2><span class="desc">How scores, ranks & movements are produced</span></div>
@@ -2331,9 +2471,12 @@ function renderMethod(){
       <div class="cb tbl-scroll" style="padding:0"><table><thead><tr>
         <th class="center">#</th><th>Parameter</th><th class="center">Methodology Category</th>
         <th class="center">Wt</th><th class="center">Type</th><th class="center">Direction</th>
+        ${admin ? `<th class="center">Actions</th>` : ''}
       </tr></thead><tbody>${wrows}
-      <tr class="total-row"><td></td><td>TOTAL</td><td></td><td class="center num">${total.toFixed(1)}%</td><td></td><td></td></tr>
+      <tr class="total-row"><td></td><td>TOTAL</td><td></td><td class="center num">${total.toFixed(1)}%</td><td></td><td></td>${admin ? '<td></td>' : ''}</tr>
       </tbody></table></div></div>
+
+    ${addParamCard}
 
     <div class="card meth" style="margin-bottom:16px"><div class="cb">
       <h3>How marks are awarded — per parameter</h3>
@@ -2750,6 +2893,99 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.addEventListener('keydown',e=>{ if(e.key==='Escape') rpCloseViewer(); });
 });
 
+window.updateParamWeight = function(paramName, val) {
+  const w = parseFloat(val);
+  if (isNaN(w) || w < 0 || w > 100) {
+    toast("Invalid weight value");
+    return;
+  }
+  if (STATE.currentData) {
+    if (!STATE.currentData.weights) STATE.currentData.weights = {};
+    STATE.currentData.weights[paramName] = w;
+    if (STATE.currentData.meta && STATE.currentData.meta[paramName]) {
+      STATE.currentData.meta[paramName].wt = w;
+    }
+    saveCustomizations();
+    saveStaged();
+    recompute();
+    toast(`Updated weight for ${paramName} to ${w}%`);
+  }
+};
+
+window.deleteParam = function(paramName) {
+  if (!confirm(`Are you sure you want to delete the parameter "${paramName}"? This will remove it and recalculate scores.`)) {
+    return;
+  }
+  if (STATE.currentData) {
+    if (STATE.currentData.parameters) {
+      STATE.currentData.parameters = STATE.currentData.parameters.filter(p => p !== paramName);
+    }
+    if (STATE.currentData.weights) {
+      delete STATE.currentData.weights[paramName];
+    }
+    if (STATE.currentData.meta) {
+      delete STATE.currentData.meta[paramName];
+    }
+    if (STATE.currentData.stations) {
+      STATE.currentData.stations.forEach(st => {
+        if (st.parameters) {
+          delete st.parameters[paramName];
+        }
+      });
+    }
+    saveCustomizations();
+    saveStaged();
+    recompute();
+    toast(`Deleted parameter: ${paramName}`);
+  }
+};
+
+window.addNewParameter = function() {
+  const name = document.getElementById('newParamName').value.trim();
+  const cat = document.getElementById('newParamCat').value.trim();
+  const wt = parseFloat(document.getElementById('newParamWeight').value);
+  const dir = parseInt(document.getElementById('newParamDir').value);
+  
+  if (!name || !cat || isNaN(wt) || wt < 0 || wt > 100) {
+    toast("Please fill all fields with valid values.");
+    return;
+  }
+  
+  if (STATE.currentData) {
+    if (!STATE.currentData.parameters) STATE.currentData.parameters = [];
+    if (STATE.currentData.parameters.includes(name)) {
+      toast("Parameter name already exists.");
+      return;
+    }
+    
+    STATE.currentData.parameters.push(name);
+    if (!STATE.currentData.weights) STATE.currentData.weights = {};
+    STATE.currentData.weights[name] = wt;
+    
+    if (!STATE.currentData.meta) STATE.currentData.meta = {};
+    STATE.currentData.meta[name] = {
+      cat: cat,
+      dir: dir,
+      wt: wt
+    };
+    
+    if (STATE.currentData.stations) {
+      STATE.currentData.stations.forEach(st => {
+        if (!st.parameters) st.parameters = {};
+        st.parameters[name] = 100.0;
+      });
+    }
+    
+    document.getElementById('newParamName').value = '';
+    document.getElementById('newParamCat').value = '';
+    document.getElementById('newParamWeight').value = '';
+    
+    saveCustomizations();
+    saveStaged();
+    recompute();
+    toast(`Added new parameter: ${name}`);
+  }
+};
 
 window.addEventListener('hashchange',()=>{ if(location.hash.toLowerCase()==='#admin' && !isAdmin()) adminLogin(); });
 
