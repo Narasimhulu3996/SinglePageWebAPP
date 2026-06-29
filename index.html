@@ -53,11 +53,11 @@ header.top{position:relative;padding-bottom:4px}
 .hmain::after{content:"";position:absolute;inset:0;pointer-events:none;
   background:radial-gradient(560px 200px at 82% -45%,rgba(255,255,255,.18),transparent 60%),
              repeating-linear-gradient(135deg,rgba(255,255,255,.035) 0 2px,transparent 2px 22px)}
-.crest{width:56px;height:56px;flex:none;border-radius:50%;object-fit:cover;
+.crest{width:44px;height:44px;flex:none;border-radius:50%;object-fit:cover;
   border:2px solid var(--gold-soft);box-shadow:0 6px 16px rgba(0,0,0,.45)}
 .crest-ph{display:flex;align-items:center;justify-content:center;
   background:radial-gradient(circle at 35% 30%,#3856d6,#0b1c66);
-  font-family:'Oswald','Archivo',sans-serif;font-weight:700;font-size:26px;
+  font-family:'Oswald','Archivo',sans-serif;font-weight:700;font-size:20px;
   letter-spacing:1px;color:var(--gold-soft)}
 .htext{flex:1;min-width:0;position:relative;z-index:1}
 .kicker{font-family:'Archivo';font-weight:700;font-size:11px;letter-spacing:.34em;color:var(--gold-soft);text-transform:uppercase}
@@ -569,13 +569,13 @@ table.fr.bdown tbody td:not(.cat-left):not(.idx-col){
 .apstate-link:hover{background:#d4a017;text-decoration:none}
 .officers{display:flex;gap:10px;align-items:flex-end;margin-right:4px;flex-shrink:0}
 .officer{display:flex;flex-direction:column;align-items:center;text-align:center}
-.officer img, .officer-ph{height:48px;width:48px;object-fit:cover;border-radius:50%;
+.officer img, .officer-ph{height:38px;width:38px;object-fit:cover;border-radius:50%;
   border:2px solid #b8860b;box-shadow:0 1px 4px rgba(0,0,0,.25);box-sizing:border-box}
-.officer .ol{margin-top:4px;font-size:10px;font-weight:700;color:#fff;letter-spacing:.4px}
+.officer .ol{margin-top:4px;font-size:9px;font-weight:700;color:#fff;letter-spacing:.4px}
 .officer-ph{display:inline-flex;align-items:center;justify-content:center;
   background:radial-gradient(circle at 35% 30%,#3856d6,#0b1c66);
-  font-family:'Oswald','Archivo',sans-serif;font-weight:700;font-size:14px;color:#f6d889;text-decoration:none}
-@media(max-width:760px){.officer img, .officer-ph{height:56px;width:56px}.officers{gap:10px}}
+  font-family:'Oswald','Archivo',sans-serif;font-weight:700;font-size:11px;color:#f6d889;text-decoration:none}
+@media(max-width:760px){.officer img, .officer-ph{height:42px;width:42px}.officers{gap:8px}}
 
 /* ============================================================
    RESPONSIVE PASS — phone / tablet / any resolution
@@ -597,8 +597,9 @@ img,canvas,svg,video{max-width:100%}
   body{font-size:14px}
   table{font-size:12px}
   .hmain{gap:12px;padding:14px;margin-top:12px}
-  .crest,.officer img{width:48px!important;height:48px!important}
-  .officers{gap:8px;margin-right:2px}
+  .crest{width:36px!important;height:36px!important}
+  .officer img, .officer-ph{width:32px!important;height:32px!important}
+  .officers{gap:6px;margin-right:2px}
   .htext h1{font-size:clamp(15px,4.6vw,20px)}
   .kicker{font-size:9.5px;letter-spacing:.22em}
   .subline{font-size:11.5px}
