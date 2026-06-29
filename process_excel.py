@@ -153,7 +153,7 @@ def process_xlsx(file_path):
     param_cols = []
     for c in range(1, len(header)):
         val = to_num(wts[c])
-        if val is not None and 0 < val <= 1:
+        if val is not None and 0.0 <= val <= 1.0:
             param_cols.append(c)
             
     parameters = []
@@ -185,13 +185,13 @@ def process_xlsx(file_path):
         for c in param_cols:
             hdr = header[c]
             val = to_num(row[c])
+            weight_sum += (weights[hdr] / 100.0)
             if val is not None:
                 # If values are decimals for percentage parameters (e.g. 0.95 for 95%)
                 if 0 < val <= 1 and '%' in hdr:
                     val = round(val * 100.0, 1)
                 params_data[hdr] = val
                 total_score += val * (weights[hdr] / 100.0)
-                weight_sum += (weights[hdr] / 100.0)
             else:
                 params_data[hdr] = None
                 
